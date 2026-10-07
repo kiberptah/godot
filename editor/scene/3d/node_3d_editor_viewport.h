@@ -347,7 +347,13 @@ private:
 	Vector3 _get_screen_to_space(const Vector3 &p_vector3);
 	Vector<Plane> _build_screen_frustum(const Point2 &p_min, const Point2 &p_max);
 
+	struct GizmoHandlePick {
+		int handle = -1; // 0-2: axis handle, 3-5: plane handle.
+		bool exact = false; // The ray through the cursor hits the handle mesh itself.
+	};
+
 	void _select_region();
+	GizmoHandlePick _pick_gizmo_handle(const Vector2 &p_screenpos, bool p_scale_handles);
 	bool _transform_gizmo_select(const Vector2 &p_screenpos, bool p_highlight_only = false);
 	void _transform_gizmo_apply(Node3D *p_node, const Transform3D &p_transform, bool p_local);
 
@@ -443,6 +449,11 @@ private:
 
 	RID move_gizmo_instance[3], move_plane_gizmo_instance[3], rotate_gizmo_instance[4], scale_gizmo_instance[3], scale_plane_gizmo_instance[3], axis_gizmo_instance[3];
 	RID trackball_sphere_instance;
+
+	// Transforms the move/scale handles were last drawn with, so picking tests exactly what is on screen.
+	Transform3D gizmo_axis_handle_xform[3];
+	Transform3D gizmo_plane_handle_xform[3];
+	bool gizmo_handle_xforms_valid = false;
 
 	String last_message;
 	String message;
@@ -545,8 +556,6 @@ private:
 
 	void _set_lock_view_rotation(bool p_lock_rotation);
 	void _add_advanced_debug_draw_mode_item(PopupMenu *p_popup, const String &p_name, int p_value, SupportedRenderingMethods p_rendering_methods = SupportedRenderingMethods::ALL, const String &p_tooltip = "");
-
-	real_t _screen_space_selection_cost(const Vector3 &p_center, const float p_radius, const Vector3 &p_pos);
 
 protected:
 	void _notification(int p_what);
