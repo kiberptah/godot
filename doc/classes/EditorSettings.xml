@@ -451,6 +451,9 @@
 		<member name="editors/3d/manipulator_gizmo_opacity" type="float" setter="" getter="">
 			Opacity of the default gizmo for moving, rotating, and scaling 3D nodes.
 		</member>
+		<member name="editors/3d/manipulator_gizmo_pick_tolerance" type="int" setter="" getter="">
+			Distance in pixels (multiplied by the editor scale) from the move and scale gizmo handles within which a handle is still highlighted when the mouse cursor isn't directly over it. A handle directly under the cursor always takes priority. Set to [code]0[/code] to only pick the handle directly under the cursor.
+		</member>
 		<member name="editors/3d/manipulator_gizmo_size" type="int" setter="" getter="">
 			Size of the default gizmo for moving, rotating, and scaling 3D nodes.
 		</member>

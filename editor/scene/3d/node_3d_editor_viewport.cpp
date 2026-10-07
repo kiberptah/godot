@@ -34,9 +34,11 @@
 #include "core/input/input.h"
 #include "core/input/input_map.h"
 #include "core/io/resource_loader.h"
+#include "core/math/geometry_2d.h"
 #include "core/math/geometry_3d.h"
 #include "core/math/math_funcs.h"
 #include "core/math/projection.h"
+#include "core/math/triangle_mesh.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
 #include "core/os/keyboard.h"
@@ -1486,6 +1488,87 @@ static Key _get_key_modifier(Ref<InputEventWithModifiers> e) {
 	return Key::NONE;
 }
 
+Node3DEditorViewport::GizmoHandlePick Node3DEditorViewport::_pick_gizmo_handle(const Vector2 &p_screenpos, bool p_scale_handles) {
+	GizmoHandlePick pick;
+	if (!gizmo_handle_xforms_valid) {
+		return pick;
+	}
+
+	const Vector3 ray_pos = get_ray_pos(p_screenpos);
+	const Vector3 ray = get_ray(p_screenpos);
+	const real_t tolerance = real_t(EDITOR_GET("editors/3d/manipulator_gizmo_pick_tolerance")) * EDSCALE;
+
+	real_t best_depth = 1e20;
+	real_t best_screen_dist = tolerance;
+
+	for (int i = 0; i < 6; i++) {
+		const int axis = i % 3;
+		const bool is_plane = i >= 3;
+
+		Ref<ArrayMesh> mesh;
+		if (p_scale_handles) {
+			mesh = is_plane ? spatial_editor->get_scale_plane_gizmo(axis) : spatial_editor->get_scale_gizmo(axis);
+		} else {
+			mesh = is_plane ? spatial_editor->get_move_plane_gizmo(axis) : spatial_editor->get_move_gizmo(axis);
+		}
+		if (mesh.is_null()) {
+			continue;
+		}
+		const Ref<TriangleMesh> tm = mesh->generate_triangle_mesh();
+		if (tm.is_null()) {
+			continue;
+		}
+		const Transform3D &xform = is_plane ? gizmo_plane_handle_xform[axis] : gizmo_axis_handle_xform[axis];
+
+		// Exact: the ray through the cursor hits the handle as it is drawn.
+		// Handles are drawn on top of each other, so the one closest to the camera is the visible one.
+		const Transform3D inv = xform.affine_inverse();
+		Vector3 hit;
+		Vector3 hit_normal;
+		if (tm->intersect_ray(inv.xform(ray_pos), inv.basis.xform(ray), hit, hit_normal)) {
+			const real_t depth = ray_pos.distance_to(xform.xform(hit));
+			if (depth < best_depth) {
+				best_depth = depth;
+				pick.handle = i;
+				pick.exact = true;
+			}
+			continue;
+		}
+
+		if (pick.exact || tolerance <= 0) {
+			continue;
+		}
+
+		// Fallback: distance from the cursor to the handle's outline on screen.
+		const Vector<Vector3> &vertices = tm->get_vertices();
+		for (const TriangleMesh::Triangle &triangle : tm->get_triangles()) {
+			Vector2 screen_points[3];
+			bool behind_camera = false;
+			for (int j = 0; j < 3; j++) {
+				const Vector3 point = xform.xform(vertices[triangle.indices[j]]);
+				if (camera->is_position_behind(point)) {
+					behind_camera = true;
+					break;
+				}
+				screen_points[j] = point_to_screen(point);
+			}
+			if (behind_camera) {
+				continue;
+			}
+
+			for (int j = 0; j < 3; j++) {
+				const real_t dist = Geometry2D::get_distance_to_segment(p_screenpos, screen_points[j], screen_points[(j + 1) % 3]);
+				if (dist < best_screen_dist) {
+					best_screen_dist = dist;
+					pick.handle = i;
+				}
+			}
+		}
+	}
+
+	return pick;
+}
+
 bool Node3DEditorViewport::_transform_gizmo_select(const Vector2 &p_screenpos, bool p_highlight_only) {
 	if (!spatial_editor->is_gizmo_visible()) {
 		return false;
@@ -1502,83 +1585,28 @@ bool Node3DEditorViewport::_transform_gizmo_select(const Vector2 &p_screenpos, b
 
 	Transform3D gt = spatial_editor->get_gizmo_transform();
 
+	const auto select_move_handle = [&](int p_handle) {
+		const int axis = p_handle % 3;
+		const bool is_plane_translate = p_handle >= 3;
+		if (p_highlight_only) {
+			spatial_editor->select_gizmo_highlight_axis(axis + (is_plane_translate ? 6 : 0));
+		} else {
+			_edit.mode = TRANSFORM_TRANSLATE;
+			_compute_edit(p_screenpos);
+			_edit.plane = TransformPlane(TRANSFORM_X_AXIS + axis + (is_plane_translate ? 3 : 0));
+		}
+	};
+
+	// A move handle that is only near the cursor, kept until the rotation rings had their chance in Transform mode.
+	int move_handle_near_cursor = -1;
+
 	if (spatial_editor->get_tool_mode() == Node3DEditor::TOOL_MODE_TRANSFORM || spatial_editor->get_tool_mode() == Node3DEditor::TOOL_MODE_MOVE) {
-		int col_axis = -1;
-		real_t col_cost = 1e20;
-
-		for (int i = 0; i < 3; i++) {
-			const Vector3 grabber_pos = gt.origin + gt.basis.get_column(i).normalized() * gizmo_scale * (GIZMO_ARROW_OFFSET + GIZMO_ARROW_SIZE * 0.5);
-			const real_t grabber_radius = gizmo_scale * GIZMO_ARROW_SIZE * 0.5;
-
-			Vector3 r;
-
-			const real_t effective_radius = grabber_radius * 1.5;
-			if (Geometry3D::segment_intersects_sphere(ray_pos, ray_pos + ray * MAX_Z, grabber_pos, effective_radius, &r)) {
-				const real_t cost = _screen_space_selection_cost(grabber_pos, effective_radius, r);
-				if (cost < col_cost) {
-					col_cost = cost;
-					col_axis = i;
-				}
-			}
-		}
-
-		bool is_plane_translate = false;
-		// plane select
-		{
-			// Adjust transform planes.
-			Transform3D pt = Transform3D(gt);
-			if (camera->get_projection() != Camera3D::ProjectionType::PROJECTION_ORTHOGONAL) {
-				const Vector3 dir = camera->get_global_position().direction_to(pt.origin);
-				for (int j = 0; j < 3; j++) {
-					// If a transform gizmo axis points away from the camera,
-					// we simply mirror the transform plane along that axis by inverting the corresponding basis component.
-					int sign = pt.basis.get_column(j).normalized().dot(dir) > CMP_EPSILON ? -1 : 1;
-					pt.basis.set_column(j, sign * pt.basis.get_column(j));
-				}
-			}
-
-			for (int i = 0; i < 3; i++) {
-				Vector3 ivec2 = pt.basis.get_column((i + 1) % 3).normalized();
-				Vector3 ivec3 = pt.basis.get_column((i + 2) % 3).normalized();
-
-				// Allow some tolerance to make the plane easier to click,
-				// even if the click is actually slightly outside the plane.
-				const Vector3 grabber_pos = pt.origin + (ivec2 + ivec3) * gizmo_scale * (GIZMO_PLANE_DST + GIZMO_PLANE_SIZE * 0.5);
-				const real_t grabber_size = gizmo_scale * GIZMO_PLANE_SIZE * 0.5;
-
-				Vector3 r;
-				Plane plane(pt.basis.get_column(i).normalized(), pt.origin);
-
-				if (plane.intersects_ray(ray_pos, ray, &r)) {
-					const real_t dist = r.distance_to(grabber_pos);
-					// Allow some tolerance to make the plane easier to click,
-					// even if the click is actually slightly outside the plane.
-					const real_t effective_size = grabber_size * 1.5;
-					if (dist < effective_size) {
-						const real_t cost = _screen_space_selection_cost(grabber_pos, effective_size, r);
-						if (cost < col_cost) {
-							col_cost = cost;
-							col_axis = i;
-
-							is_plane_translate = true;
-						}
-					}
-				}
-			}
-		}
-
-		if (col_axis != -1) {
-			if (p_highlight_only) {
-				spatial_editor->select_gizmo_highlight_axis(col_axis + (is_plane_translate ? 6 : 0));
-
-			} else {
-				//handle plane translate
-				_edit.mode = TRANSFORM_TRANSLATE;
-				_compute_edit(p_screenpos);
-				_edit.plane = TransformPlane(TRANSFORM_X_AXIS + col_axis + (is_plane_translate ? 3 : 0));
-			}
+		const GizmoHandlePick pick = _pick_gizmo_handle(p_screenpos, false);
+		if (pick.exact || (pick.handle != -1 && spatial_editor->get_tool_mode() == Node3DEditor::TOOL_MODE_MOVE)) {
+			select_move_handle(pick.handle);
 			return true;
 		}
+		move_handle_near_cursor = pick.handle;
 	}
 
 	if (spatial_editor->get_tool_mode() == Node3DEditor::TOOL_MODE_TRANSFORM || spatial_editor->get_tool_mode() == Node3DEditor::TOOL_MODE_ROTATE) {
@@ -1688,78 +1716,22 @@ bool Node3DEditorViewport::_transform_gizmo_select(const Vector2 &p_screenpos, b
 		}
 	}
 
+	if (move_handle_near_cursor != -1) {
+		select_move_handle(move_handle_near_cursor);
+		return true;
+	}
+
 	if (spatial_editor->get_tool_mode() == Node3DEditor::TOOL_MODE_SCALE) {
-		int col_axis = -1;
-		float col_cost = 1e20;
-
-		for (int i = 0; i < 3; i++) {
-			const Vector3 grabber_pos = gt.origin + gt.basis.get_column(i).normalized() * gizmo_scale * (GIZMO_SCALE_OFFSET + GIZMO_SCALE_SIZE * 0.5);
-			const real_t grabber_radius = gizmo_scale * GIZMO_SCALE_SIZE * 0.5;
-
-			Vector3 r;
-
-			const real_t effective_radius = grabber_radius * 1.5;
-			if (Geometry3D::segment_intersects_sphere(ray_pos, ray_pos + ray * MAX_Z, grabber_pos, effective_radius, &r)) {
-				const real_t cost = _screen_space_selection_cost(grabber_pos, effective_radius, r);
-				if (cost < col_cost) {
-					col_cost = cost;
-					col_axis = i;
-				}
-			}
-		}
-
-		bool is_plane_scale = false;
-		// plane select
-		{
-			// Adjust transform planes.
-			Transform3D pt = Transform3D(gt);
-			if (camera->get_projection() != Camera3D::ProjectionType::PROJECTION_ORTHOGONAL) {
-				const Vector3 dir = camera->get_global_position().direction_to(pt.origin);
-				for (int j = 0; j < 3; j++) {
-					int sign = pt.basis.get_column(j).normalized().dot(dir) > CMP_EPSILON ? -1 : 1;
-					pt.basis.set_column(j, sign * pt.basis.get_column(j));
-				}
-			}
-
-			for (int i = 0; i < 3; i++) {
-				const Vector3 ivec2 = pt.basis.get_column((i + 1) % 3).normalized();
-				const Vector3 ivec3 = pt.basis.get_column((i + 2) % 3).normalized();
-
-				// Allow some tolerance to make the plane easier to click,
-				// even if the click is actually slightly outside the plane.
-				const Vector3 grabber_pos = pt.origin + (ivec2 + ivec3) * gizmo_scale * (GIZMO_PLANE_DST + GIZMO_PLANE_SIZE * 0.5);
-				const real_t grabber_size = gizmo_scale * GIZMO_PLANE_SIZE * 0.5;
-
-				Vector3 r;
-				Plane plane(pt.basis.get_column(i).normalized(), pt.origin);
-
-				if (plane.intersects_ray(ray_pos, ray, &r)) {
-					const real_t dist = r.distance_to(grabber_pos);
-					// Allow some tolerance to make the plane easier to click,
-					// even if the click is actually slightly outside the plane.
-					const real_t effective_size = grabber_size * 1.5;
-					if (dist < effective_size) {
-						const real_t cost = _screen_space_selection_cost(grabber_pos, effective_size, r);
-						if (cost < col_cost) {
-							col_cost = cost;
-							col_axis = i;
-
-							is_plane_scale = true;
-						}
-					}
-				}
-			}
-		}
-
-		if (col_axis != -1) {
+		const GizmoHandlePick pick = _pick_gizmo_handle(p_screenpos, true);
+		if (pick.handle != -1) {
+			const int axis = pick.handle % 3;
+			const bool is_plane_scale = pick.handle >= 3;
 			if (p_highlight_only) {
-				spatial_editor->select_gizmo_highlight_axis(col_axis + (is_plane_scale ? 12 : 9));
-
+				spatial_editor->select_gizmo_highlight_axis(axis + (is_plane_scale ? 12 : 9));
 			} else {
-				//handle scale
 				_edit.mode = TRANSFORM_SCALE;
 				_compute_edit(p_screenpos);
-				_edit.plane = TransformPlane(TRANSFORM_X_AXIS + col_axis + (is_plane_scale ? 3 : 0));
+				_edit.plane = TransformPlane(TRANSFORM_X_AXIS + axis + (is_plane_scale ? 3 : 0));
 			}
 			return true;
 		}
@@ -5021,6 +4993,8 @@ void Node3DEditorViewport::switch_preview_camera(Camera3D *p_new_camera) {
 }
 
 void Node3DEditorViewport::update_transform_gizmo_view() {
+	gizmo_handle_xforms_valid = false;
+
 	if (!camera->is_inside_tree()) {
 		return;
 	}
@@ -5125,6 +5099,9 @@ void Node3DEditorViewport::update_transform_gizmo_view() {
 			}
 		}
 
+		gizmo_axis_handle_xform[i] = axis_angle;
+		gizmo_plane_handle_xform[i] = plane_angle;
+
 		RenderingServer::get_singleton()->instance_set_transform(move_gizmo_instance[i], axis_angle);
 		RenderingServer::get_singleton()->instance_set_visible(move_gizmo_instance[i], show_gizmo && (spatial_editor->get_tool_mode() == Node3DEditor::TOOL_MODE_TRANSFORM || spatial_editor->get_tool_mode() == Node3DEditor::TOOL_MODE_MOVE));
 		RenderingServer::get_singleton()->instance_set_transform(move_plane_gizmo_instance[i], plane_angle);
@@ -5137,6 +5114,7 @@ void Node3DEditorViewport::update_transform_gizmo_view() {
 		RenderingServer::get_singleton()->instance_set_visible(scale_plane_gizmo_instance[i], show_gizmo && (spatial_editor->get_tool_mode() == Node3DEditor::TOOL_MODE_SCALE));
 		RenderingServer::get_singleton()->instance_set_transform(axis_gizmo_instance[i], xform);
 	}
+	gizmo_handle_xforms_valid = true;
 
 	Transform3D view_rotation_xform = xform;
 	view_rotation_xform.orthonormalize();
@@ -6886,17 +6864,6 @@ void Node3DEditorViewport::_add_advanced_debug_draw_mode_item(PopupMenu *p_popup
 	display_submenu->add_radio_check_item(p_name, p_value);
 	Array item_data = { p_rendering_methods, p_tooltip };
 	display_submenu->set_item_metadata(-1, item_data); // Tooltip is assigned in NOTIFICATION_TRANSLATION_CHANGED.
-}
-
-real_t Node3DEditorViewport::_screen_space_selection_cost(const Vector3 &p_center, const float p_radius, const Vector3 &p_pos) {
-	const Vector3 cam_up = camera->get_transform().basis.get_column(1).normalized();
-
-	const Point2 screen_pos = point_to_screen(p_center);
-	const real_t screen_size = screen_pos.distance_to(point_to_screen(p_center + cam_up * p_radius));
-	const real_t screen_dist = screen_pos.distance_to(point_to_screen(p_pos));
-
-	real_t cost = Math::pow(screen_dist / MAX(screen_size, 1.0), 2.0);
-	return cost;
 }
 
 void Node3DEditorViewport::_load_viewport_inputs() {
