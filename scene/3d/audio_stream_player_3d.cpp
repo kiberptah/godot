@@ -557,22 +557,29 @@ Vector<AudioFrame> AudioStreamPlayer3D::_update_panning() {
 
 	bus_volumes.clear();
 	if (has_any_listener_in_range) {
+		// The dry signal goes to the player's own bus, or to the area's override bus if it has one.
+		StringName dry_bus_name = internal->bus;
 #ifndef PHYSICS_3D_DISABLED
-		if (area) {
-			if (area->is_overriding_audio_bus()) {
-				//override audio bus
-				bus_volumes[area->get_audio_bus_name()] = output_volume_vector;
-			}
+		if (area && area->is_overriding_audio_bus()) {
+			dry_bus_name = area->get_audio_bus_name();
+		}
+#endif // PHYSICS_3D_DISABLED
+		bus_volumes[dry_bus_name] = output_volume_vector;
 
-			if (area->is_using_reverb_bus()) {
-				StringName reverb_bus_name = area->get_reverb_bus_name();
+#ifndef PHYSICS_3D_DISABLED
+		// The reverb send is added on top of the dry signal rather than replacing it.
+		if (area && area->is_using_reverb_bus()) {
+			StringName reverb_bus_name = area->get_reverb_bus_name();
+			if (reverb_bus_name == dry_bus_name) {
+				Vector<AudioFrame> &bus_volume = bus_volumes[reverb_bus_name];
+				for (int i = 0; i < bus_volume.size(); i++) {
+					bus_volume.write[i] += output_reverb_vector[i];
+				}
+			} else {
 				bus_volumes[reverb_bus_name] = output_reverb_vector;
 			}
-		} else
-#endif // PHYSICS_3D_DISABLED
-		{
-			bus_volumes[internal->bus] = output_volume_vector;
 		}
+#endif // PHYSICS_3D_DISABLED
 	}
 
 	// If no listeners are in range and this was the case last frame, then we can skip setting any audio.
