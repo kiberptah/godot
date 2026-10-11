@@ -32,3 +32,22 @@ python -m SCons platform=windows target=editor d3d12=no -j30
 
 Output: `bin/godot.windows.editor.x86_64.exe`. Drop `d3d12=no` after running
 `python misc/scripts/install_d3d12_sdk_windows.py` if the Direct3D 12 driver is needed.
+
+## Export templates (Windows)
+
+```bash
+python -m SCons platform=windows target=template_release d3d12=no -j30
+python -m SCons platform=windows target=template_debug d3d12=no -j30
+```
+
+Then install them where the editor looks for them (bash):
+
+```bash
+D="$APPDATA/Godot/export_templates/4.8.dev"; mkdir -p "$D"; printf '4.8.dev' > "$D/version.txt"
+for t in release debug; do
+	cp bin/godot.windows.template_$t.x86_64.exe "$D/windows_${t}_x86_64.exe"
+	cp bin/godot.windows.template_$t.x86_64.console.exe "$D/windows_${t}_x86_64_console.exe"
+done
+```
+
+Rebuild and reinstall them after any change to runtime code, or exported games won't have it.
