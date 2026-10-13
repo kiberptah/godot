@@ -9,6 +9,11 @@ Branch `custom` holds local changes on top of upstream `master`.
   transforms they were drawn with. The closest handle actually under the cursor wins. Only when
   nothing is directly hit, the handle whose on-screen outline is within
   `editors/3d/manipulator_gizmo_pick_tolerance` pixels (default 3, `0` = exact only) is used.
+- **Dry signal kept inside reverb areas** (`scene/3d/audio_stream_player_3d.cpp`, `_update_panning`):
+  inside an Area3D with a reverb bus, an AudioStreamPlayer3D still plays on its own bus (or the
+  area's override bus), and the reverb send is added on top, as in Godot 3. Upstream sent it only
+  to the reverb bus, scaled by the area's reverb amount, so the dry sound went silent and an
+  amount of 0 muted it entirely (godotengine/godot#96480).
 - **UID cache count stays right with several Godot processes** (`core/io/resource_uid.cpp`,
   `update_cache`): before appending to `.godot/uid_cache.bin`, it counts the entries actually in
   the file instead of trusting its own tally, which goes stale when another process (an open
