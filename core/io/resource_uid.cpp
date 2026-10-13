@@ -351,6 +351,28 @@ Error ResourceUID::load_from_cache(bool p_reset) {
 	return OK;
 }
 
+// Walks the entries of an open cache file, ignoring the count in its header. Returns how many
+// complete entries it holds, or -1 if it ends partway through one.
+static int64_t _count_cache_file_entries(const Ref<FileAccess> &p_file) {
+	const uint64_t length = p_file->get_length();
+	uint64_t pos = 4; // Past the entry count.
+	int64_t count = 0;
+	while (pos < length) {
+		if (length - pos < 12) {
+			return -1;
+		}
+		p_file->seek(pos + 8); // Past the ID.
+		const uint32_t len = p_file->get_32();
+		pos += 12;
+		if (length - pos < len) {
+			return -1;
+		}
+		pos += len;
+		count++;
+	}
+	return pos == length ? count : -1;
+}
+
 Error ResourceUID::update_cache() {
 	if (!changed) {
 		return OK;
@@ -369,6 +391,16 @@ Error ResourceUID::update_cache() {
 				if (f.is_null()) {
 					return ERR_CANT_OPEN;
 				}
+				// Another process (an open editor, or a command-line import) may have written to the
+				// file since this one last read it, so count what's really in it instead of trusting
+				// `cache_entries`, or the header ends up too low and the last entries get ignored.
+				const int64_t entries_in_file = _count_cache_file_entries(f);
+				if (entries_in_file < 0) {
+					// It ends partway through an entry; rewrite it from what this process knows.
+					f.unref();
+					return save_to_cache();
+				}
+				cache_entries = entries_in_file;
 				f->seek_end();
 			}
 			f->store_64(uint64_t(E.key));

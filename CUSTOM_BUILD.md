@@ -9,6 +9,12 @@ Branch `custom` holds local changes on top of upstream `master`.
   transforms they were drawn with. The closest handle actually under the cursor wins. Only when
   nothing is directly hit, the handle whose on-screen outline is within
   `editors/3d/manipulator_gizmo_pick_tolerance` pixels (default 3, `0` = exact only) is used.
+- **UID cache count stays right with several Godot processes** (`core/io/resource_uid.cpp`,
+  `update_cache`): before appending to `.godot/uid_cache.bin`, it counts the entries actually in
+  the file instead of trusting its own tally, which goes stale when another process (an open
+  editor, a command-line `--import`) wrote to the file meanwhile. A stale tally wrote too low a
+  count into the header, and the last entries (often `default_bus_layout.tres`) were ignored at
+  runtime. A file ending in a partial entry is rewritten in full.
 
 ## Remotes
 
