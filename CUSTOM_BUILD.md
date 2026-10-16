@@ -20,6 +20,19 @@ Branch `custom` holds local changes on top of upstream `master`.
   editor, a command-line `--import`) wrote to the file meanwhile. A stale tally wrote too low a
   count into the header, and the last entries (often `default_bus_layout.tres`) were ignored at
   runtime. A file ending in a partial entry is rewritten in full.
+- **`--no-focus` command-line flag, main window opens behind** (`main/main.cpp`,
+  `platform/windows/display_server_windows.cpp` `show_window`): `--no-focus` opens the main window
+  with `WINDOW_FLAG_NO_FOCUS`, the same as the `display/window/size/no_focus` project setting, but
+  only for that run. On Windows a no-focus *main* window is now also shown at the bottom of the
+  stacking order (`SetWindowPos(HWND_BOTTOM, SWP_NOACTIVATE | SWP_SHOWWINDOW)`) instead of on top,
+  so automated runs (screenshot or test drivers started by scripts or an AI agent) neither take
+  focus nor cover whatever you're working in; it still renders normally, so screenshots work.
+  Other no-focus windows (tooltips, popups) behave as upstream. This also applies when a project
+  sets `no_focus` itself. Like the project setting, a no-focus window ignores keyboard input, so
+  it's meant for unattended runs. Ignored with `--wid` (embedded). `--position` can't move the
+  window off-screen (it's pulled back onto the primary screen), so pair it with a small
+  `--resolution`. Runs that don't need rendering should use `--headless`, which opens no window.
+  Example: `--path <project> --windowed --no-focus --resolution 320x180 --script driver.gd`.
 
 ## Remotes
 

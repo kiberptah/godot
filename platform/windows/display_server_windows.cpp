@@ -2042,6 +2042,10 @@ void DisplayServerWindows::show_window(DisplayServerEnums::WindowID p_id) {
 		SetFocus(wd.hWnd); // Set keyboard focus.
 	} else if (wd.minimized) {
 		ShowWindow(wd.hWnd, SW_SHOWMINIMIZED);
+	} else if (wd.no_focus && p_id == DisplayServerEnums::MAIN_WINDOW_ID) {
+		// A main window that can't be focused opens behind other windows, so unattended runs
+		// (e.g. `--no-focus`) don't cover what the user is working in.
+		SetWindowPos(wd.hWnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
 	} else if (wd.no_focus) {
 		// https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindow
 		ShowWindow(wd.hWnd, SW_SHOWNA);
