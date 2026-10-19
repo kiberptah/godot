@@ -256,6 +256,8 @@ private:
 
 	String current_path = "res://";
 	String select_after_scan;
+	// Whether select_after_scan is also opened in the inspector (a duplicated file).
+	bool edit_after_scan = false;
 	String main_scene_path;
 	LocalVector<StringName> path_project_settings;
 

@@ -35,8 +35,9 @@ Branch `custom` holds local changes on top of upstream `master`.
   Example: `--path <project> --windowed --no-focus --resolution 320x180 --script driver.gd`.
 - **Duplicate selects the copy** (`editor/docks/filesystem_dock.cpp`, `_duplicate_operation_confirm`):
   after Duplicate... in the FileSystem dock, the new file or folder is selected once the scan
-  finishes (via `select_after_scan`, as copying by Ctrl-drag already did). Editor only, so export
-  templates don't need rebuilding for it.
+  finishes (via `select_after_scan`, as copying by Ctrl-drag already did), and a duplicated file
+  is opened in the inspector as double-clicking it would (`edit_after_scan`; scenes aren't, since
+  that opens them in a new tab). Editor only, so export templates don't need rebuilding for it.
 
 ## Remotes
 
