@@ -33,6 +33,10 @@ Branch `custom` holds local changes on top of upstream `master`.
   window off-screen (it's pulled back onto the primary screen), so pair it with a small
   `--resolution`. Runs that don't need rendering should use `--headless`, which opens no window.
   Example: `--path <project> --windowed --no-focus --resolution 320x180 --script driver.gd`.
+- **Duplicate selects the copy** (`editor/docks/filesystem_dock.cpp`, `_duplicate_operation_confirm`):
+  after Duplicate... in the FileSystem dock, the new file or folder is selected once the scan
+  finishes (via `select_after_scan`, as copying by Ctrl-drag already did). Editor only, so export
+  templates don't need rebuilding for it.
 
 ## Remotes
 
