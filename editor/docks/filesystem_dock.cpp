@@ -1446,7 +1446,15 @@ void FileSystemDock::_fs_changed() {
 
 	if (!select_after_scan.is_empty()) {
 		_navigate_to_path(select_after_scan);
+		if (edit_after_scan) {
+			// Show it in the inspector, as double-clicking it would; scenes aren't opened in a new tab.
+			const String resource_type = ResourceLoader::get_resource_type(select_after_scan);
+			if (!resource_type.is_empty() && resource_type != "PackedScene" && resource_type != "AnimationLibrary") {
+				EditorNode::get_singleton()->load_resource(select_after_scan);
+			}
+		}
 		select_after_scan.clear();
+		edit_after_scan = false;
 		import_dock_needs_update = true;
 		_update_import_dock();
 	}
@@ -1979,6 +1987,7 @@ void FileSystemDock::_duplicate_operation_confirm(const String &p_path) {
 	}
 	_try_duplicate_item(to_duplicate, p_path);
 	select_after_scan = p_path;
+	edit_after_scan = to_duplicate.is_file;
 }
 
 void FileSystemDock::_move_confirm() {
